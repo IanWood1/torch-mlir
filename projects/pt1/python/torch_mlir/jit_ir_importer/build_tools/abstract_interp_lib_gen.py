@@ -443,6 +443,14 @@ def aten〇grid_sampler〡shape(input: List[int], grid: List[int],
     output = [input[0], input[1], grid[1], grid[2]]
     return output
 
+def aten〇linalg_solve_ex〡shape(
+        A: List[int],
+        B: List[int],
+        left: bool = True,
+        check_errors: bool = False) -> Tuple[List[int], List[int]]:
+    assert A[-1] == A[-2], "A must be square"
+    return A[:-2] + [A[-1], B[-1]], [1]
+
 
 def aten〇linalg_solve_ex〡shape(
         A: List[int],
