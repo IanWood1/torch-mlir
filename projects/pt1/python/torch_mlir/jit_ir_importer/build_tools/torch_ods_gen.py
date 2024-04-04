@@ -701,6 +701,10 @@ def emit_ops(emitter_td: TextEmitter, registry: Registry):
     emit("aten::linspace : (Scalar, Scalar, int, int?, int?, Device?, bool?) -> (Tensor)")
     emit("aten::linalg_cross : (Tensor, Tensor, int) -> (Tensor)", has_verifier=True)
     emit("aten::linalg_solve_ex : (Tensor, Tensor, bool, bool) -> (Tensor, Tensor)")
+    emit("aten::linalg_solve : (Tensor, Tensor, bool) -> (Tensor)")
+    emit("aten::linalg_lu_factor : (Tensor, bool) -> (Tensor, Tensor)")
+    emit("aten::linalg_lu_solve : (Tensor, Tensor, Tensor, bool, bool) -> (Tensor)")
+    
 
     # Functionalization ops
     emit("aten::alias_copy : (Tensor) -> (Tensor)")
