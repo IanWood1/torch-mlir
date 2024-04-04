@@ -8459,6 +8459,33 @@ def Torch_AtenDiagEmbedOp : Torch_Op<"aten.diag_embed", [
   }];
 }
 
+def Torch_AtenLinalgSolveExOp : Torch_Op<"aten.linalg_solve_ex", [
+    AllowsTypeRefinement,
+    HasValueSemantics,
+    ReadOnly
+  ]> {
+  let summary = "Generated op for `aten::linalg_solve_ex : (Tensor, Tensor, bool, bool) -> (Tensor, Tensor)`";
+  let arguments = (ins
+    AnyTorchTensorType:$A,
+    AnyTorchTensorType:$B,
+    Torch_BoolType:$left,
+    Torch_BoolType:$check_errors
+  );
+  let results = (outs
+    AnyTorchOptionalTensorType:$result,
+    AnyTorchOptionalTensorType:$info
+  );
+  let hasCustomAssemblyFormat = 1;
+  let extraClassDefinition = [{
+    ParseResult AtenLinalgSolveExOp::parse(OpAsmParser &parser, OperationState &result) {
+      return parseDefaultTorchOp(parser, result, 4, 2);
+    }
+    void AtenLinalgSolveExOp::print(OpAsmPrinter &printer) {
+      printDefaultTorchOp(printer, *this, 4, 2);
+    }
+  }];
+}
+
 def Torch_AtenConstantPadNdOp : Torch_Op<"aten.constant_pad_nd", [
     AllowsTypeRefinement,
     HasValueSemantics,
