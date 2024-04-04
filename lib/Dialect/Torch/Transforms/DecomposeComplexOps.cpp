@@ -2477,26 +2477,6 @@ public:
 };
 } // namespace
 
-namespace {
-class DecomposeAtenLinalgSolveExOp
-    : public OpRewritePattern<AtenLinalgSolveExOp> {
-public:
-  using OpRewritePattern::OpRewritePattern;
-  LogicalResult matchAndRewrite(AtenLinalgSolveExOp op,
-                                PatternRewriter &rewriter) const override {
-    Location loc = op.getLoc();
-    Value input_a = op.getA();
-    Value input_b = op.getB();
-    Value input_left = op.getLeft();
-    Value input_check_errors = op.getCheckErrors();
-
-    // check to make sure tensor_a is inverible (could be a batch)
-
-    return success();
-  }
-};
-} // namespace
-
 // Selu = scale * (max(0,x) + min(0,alpha * (exp(x) − 1)))
 namespace {
 class DecomposeAtenSeluOp : public OpRewritePattern<AtenSeluOp> {

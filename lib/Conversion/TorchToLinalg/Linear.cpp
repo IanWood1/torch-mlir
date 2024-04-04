@@ -1184,6 +1184,31 @@ public:
 };
 } // namespace
 
+namespace {
+class ConvertAtenLinalgSolveExOp
+    : public OpConversionPattern<AtenLinalgSolveExOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult
+  matchAndRewrite(AtenLinalgSolveExOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    Location loc = op.getLoc();
+    Value input_a = op.getA();
+    Value input_b = op.getB();
+    Value input_left = op.getLeft();
+    Value input_check_errors = op.getCheckErrors();
+
+    // input_a: Tensor of ize (*, n, n)
+    // input_b: Tensor of size (*, n) or (*, n, k) or (n,) or (n, k)
+    // if left = True solve -> AX=B; otherwise solve XA = B
+    // output: tuple (result, info) where info is the triangular factorization
+    //
+
+    return success();
+  }
+};
+} // namespace
+
 void mlir::torch::torch_to_linalg::populateLinearPatternsAndLegality(
     TypeConverter &typeConverter, RewritePatternSet &patterns,
     ConversionTarget &target) {
