@@ -1820,8 +1820,7 @@ def _emit_operation(
 
 # Opaque value to indicate something is empty. Used in cases where 'None'
 # may have a different meaning.
-class EmptyType:
-    ...
+class EmptyType: ...
 
 
 Empty = EmptyType()
@@ -1981,5 +1980,4 @@ TENSOR_SCALAR_OP_CONVERTER = {
     "torch.aten.div.Tensor": "torch.aten.div.Scalar",
     "torch.aten.add.Tensor": "torch.aten.add.Scalar",
     "torch.aten.sub.Tensor": "torch.aten.sub.Scalar",
-    "torch.aten.floor_divide": "torch.aten.floor_divide.Scalar",
 }
