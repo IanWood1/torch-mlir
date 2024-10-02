@@ -7,6 +7,9 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "mlir/Dialect/Tensor/IR/Tensor.h"
+#include "mlir/Dialect/Utils/StaticValueUtils.h"
+#include "mlir/IR/OpDefinition.h"
 #include "torch-mlir/Conversion/TorchToLinalg/TorchToLinalg.h"
 
 #include "PopulatePatterns.h"
@@ -486,6 +489,28 @@ public:
       indicesTy = RankedTensorType::get({1}, indicesTy.getElementType());
       indices = rewriter.create<tensor::ExpandShapeOp>(loc, indicesTy, indices,
                                                        reassociations);
+    }
+    // Value vCenterLeftSlice = rewriter.create<tensor::ExtractSliceOp>(
+    //     loc, input, extractOffsetsLT, extractShapeLR, allOneStrides);
+
+    // TODO: Handle splat and/or handle single elem ofr
+    DenseElementsAttr idx;
+    if (matchPattern(op.getIndex(), m_Constant(&idx)) &&
+        idx.getType().getRank() == 1) {
+      SmallVector<OpFoldResult> offsets(inputRank,
+                                        rewriter.getI64IntegerAttr(0));
+      SmallVector<OpFoldResult> sizes(
+          getAsOpFoldResult(rewriter.getI64ArrayAttr(inputType.getShape())));
+      SmallVector<OpFoldResult> strides(inputRank,
+                                        rewriter.getI64IntegerAttr(1));
+
+      offsets[dimInt] =
+          rewriter.getIndexAttr(idx.getSplatValue<APInt>().getSExtValue());
+      sizes[dimInt] = rewriter.getIndexAttr(1);
+      auto finalRes = rewriter.create<tensor::ExtractSliceOp>(
+          loc, input, offsets, sizes, strides);
+      rewriter.replaceOpWithNewOp<tensor::CastOp>(op, resultType, finalRes);
+      return success();
     }
 
     SmallVector<Value> resultShape = getTensorSizes(rewriter, loc, input);
