@@ -629,6 +629,68 @@ func.func @test_matmulinteger_non_scalar_rhsZp(%arg0: !torch.vtensor<[?,?],ui8>,
 
 // -----
 
+// CHECK-LABEL: func.func @test_multi_head_attention
+func.func @test_multi_head_attention(%query: !torch.vtensor<[2,8,256],f32>, %key: !torch.vtensor<[2,8,256],f32>, %value: !torch.vtensor<[2,8,256],f32>) -> !torch.vtensor<[2,8,256],f32> attributes {torch.onnx_meta.opset_version = 1 : si64} {
+  // CHECK-DAG: %[[HEADSIZE:.*]] = torch.constant.int 32
+  // CHECK-DAG: %[[NUMHEADS:.*]] = torch.constant.int 8
+  // CHECK-DAG: %[[HIDDEN:.*]] = torch.constant.int 256
+  // CHECK: torch.aten.size.int
+  // CHECK: torch.aten.size.int
+  // CHECK: torch.aten.reshape
+  // CHECK: torch.aten.reshape
+  // CHECK: torch.aten.reshape
+  // CHECK: torch.aten.scaled_dot_product_attention
+  // CHECK: torch.aten.reshape
+  %0 = torch.operator "onnx.MultiHeadAttention"(%query, %key, %value) {torch.onnx.num_heads = 8 : si64, torch.onnx.scale = 0.1767766953125 : f32, torch.onnx.unidirectional = 0 : si64} : (!torch.vtensor<[2,8,256],f32>, !torch.vtensor<[2,8,256],f32>, !torch.vtensor<[2,8,256],f32>) -> !torch.vtensor<[2,8,256],f32>
+  return %0 : !torch.vtensor<[2,8,256],f32>
+}
+
+// -----
+
+// Test MultiHeadAttention with dynamic batch and sequence dimensions (common in real models)
+// CHECK-LABEL: func.func @test_multi_head_attention_dynamic
+func.func @test_multi_head_attention_dynamic(%query: !torch.vtensor<[?,?,4096],f16>, %key: !torch.vtensor<[?,?,4096],f16>, %value: !torch.vtensor<[?,?,4096],f16>, %mask: !torch.vtensor<[?,32,?,?],f16>) -> !torch.vtensor<[?,?,4096],f16> attributes {torch.onnx_meta.opset_version = 1 : si64} {
+  // CHECK-DAG: %[[HEADSIZE:.*]] = torch.constant.int 128
+  // CHECK-DAG: %[[NUMHEADS:.*]] = torch.constant.int 32
+  // CHECK-DAG: %[[HIDDEN:.*]] = torch.constant.int 4096
+  // CHECK: torch.aten.size.int
+  // CHECK: torch.aten.size.int
+  // CHECK: torch.aten.reshape
+  // CHECK: torch.aten.reshape
+  // CHECK: torch.aten.reshape
+  // CHECK: torch.aten.scaled_dot_product_attention
+  // CHECK: torch.aten.reshape
+  %none = torch.constant.none
+  %0 = torch.operator "onnx.MultiHeadAttention"(%query, %key, %value, %none, %none, %mask) {torch.onnx.num_heads = 32 : si64, torch.onnx.scale = 8.838835e-02 : f32, torch.onnx.unidirectional = 0 : si64} : (!torch.vtensor<[?,?,4096],f16>, !torch.vtensor<[?,?,4096],f16>, !torch.vtensor<[?,?,4096],f16>, !torch.none, !torch.none, !torch.vtensor<[?,32,?,?],f16>) -> !torch.vtensor<[?,?,4096],f16>
+  return %0 : !torch.vtensor<[?,?,4096],f16>
+}
+
+// -----
+
+// CHECK-LABEL: func.func @test_multi_head_attention_with_attention_bias
+func.func @test_multi_head_attention_with_attention_bias(
+    %query: !torch.vtensor<[2,8,64],f32>,
+    %key: !torch.vtensor<[2,8,64],f32>,
+    %value: !torch.vtensor<[2,8,64],f32>,
+    %attention_bias: !torch.vtensor<[2,4,8,8],f32>
+) -> !torch.vtensor<[2,8,64],f32> attributes {torch.onnx_meta.ir_version = 9 : si64, torch.onnx_meta.opset_version = 17 : si64} {
+  // CHECK-DAG: %[[HEADSIZE:.*]] = torch.constant.int 16
+  // CHECK-DAG: %[[NUMHEADS:.*]] = torch.constant.int 4
+  // CHECK-DAG: %[[HIDDEN:.*]] = torch.constant.int 64
+  // CHECK: torch.aten.size.int
+  // CHECK: torch.aten.size.int
+  // CHECK: torch.aten.reshape
+  // CHECK: torch.aten.reshape
+  // CHECK: torch.aten.reshape
+  // CHECK: torch.aten.scaled_dot_product_attention
+  // CHECK: torch.aten.reshape
+  %none = torch.constant.none
+  %0 = torch.operator "onnx.MultiHeadAttention"(%query, %key, %value, %none, %none, %attention_bias) {torch.onnx.num_heads = 4 : si64} : (!torch.vtensor<[2,8,64],f32>, !torch.vtensor<[2,8,64],f32>, !torch.vtensor<[2,8,64],f32>, !torch.none, !torch.none, !torch.vtensor<[2,4,8,8],f32>) -> !torch.vtensor<[2,8,64],f32>
+  return %0 : !torch.vtensor<[2,8,64],f32>
+}
+
+// -----
+
 // CHECK-LABEL:   func.func @test_multinomial_default
 func.func @test_multinomial_default(%arg0: !torch.vtensor<[3,5],f64>) -> !torch.vtensor<[3, 1],si32> attributes {torch.onnx_meta.ir_version = 8 : si64, torch.onnx_meta.opset_version = 15 : si64, torch.onnx_meta.producer_name = "backend-test", torch.onnx_meta.producer_version = ""} {
     // CHECK:           %[[VAL_1:.*]] = torch.constant.int 3
