@@ -8,6 +8,7 @@
 //===----------------------------------------------------------------------===//
 #include "llvm/ADT/SmallVector.h"
 #define DEBUG_TYPE "torch-mlir-torch-dialect"
+#include "mlir/IR/DialectResourceBlobManager.h"
 #include "torch-mlir/Dialect/Torch/IR/TorchOps.h"
 #include "torch-mlir/Dialect/Torch/Utils/Utils.h"
 #include "llvm/Support/Debug.h"
@@ -4984,6 +4985,31 @@ OpFoldResult AtenItemOp::fold(FoldAdaptor adaptor) {
       return getF64FloatAttr(getContext(), floatAttr.getValueAsDouble());
     }
     return nullptr;
+  }
+
+  DenseResourceElementsAttr resourceAttr;
+  if (matchPattern(getOperand(), m_Constant(&resourceAttr))) {
+    // Get the blob (may be null if resource was elided)
+    auto *blob = resourceAttr.getRawHandle().getBlob();
+    if (!blob)
+      return nullptr;
+
+    // Get the tensor type to reconstruct a DenseElementsAttr
+    auto tensorType = cast<ShapedType>(resourceAttr.getType());
+
+    // Convert resource data to DenseElementsAttr for typed access
+    auto rawData = blob->getData();
+    auto splat = DenseElementsAttr::getFromRawBuffer(tensorType, rawData)
+                     .getSplatValue<Attribute>();
+    if (auto intAttr = dyn_cast<IntegerAttr>(splat)) {
+      return intAttr.getType().isUnsignedInteger()
+                 ? getI64IntegerAttr(getContext(), intAttr.getUInt())
+                 : getI64IntegerAttr(getContext(),
+                                     intAttr.getValue().getSExtValue());
+    }
+    if (auto floatAttr = dyn_cast<FloatAttr>(splat)) {
+      return getF64FloatAttr(getContext(), floatAttr.getValueAsDouble());
+    }
   }
 
   if (auto full = getOperand().getDefiningOp<Torch::AtenFullOp>()) {
