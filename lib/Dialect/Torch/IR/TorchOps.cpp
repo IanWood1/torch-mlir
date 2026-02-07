@@ -181,16 +181,9 @@ static Value getScalarIntValue(Value input, Location loc,
     return nullptr;
 
   if (auto valueTensorLiteralOp = input.getDefiningOp<ValueTensorLiteralOp>()) {
-    if (inputDtype.isInteger(64)) {
-      auto val = cast<DenseIntElementsAttr>(valueTensorLiteralOp.getValue())
-                     .getSplatValue<int64_t>();
-      return Torch::ConstantIntOp::create(rewriter, loc,
-                                          rewriter.getI64IntegerAttr(val));
-    } else {
-      auto val = cast<DenseIntElementsAttr>(valueTensorLiteralOp.getValue())
-                     .getSplatValue<bool>();
-      return Torch::ConstantIntOp::create(rewriter, loc,
-                                          rewriter.getI64IntegerAttr(val));
+    IntegerAttr constantValue;
+    if (matchPattern(input, m_Constant(&constantValue))) {
+      return Torch::ConstantIntOp::create(rewriter, loc, constantValue);
     }
   } else if (auto primNumToTensorScalarOp =
                  input.getDefiningOp<PrimNumToTensorScalarOp>()) {
