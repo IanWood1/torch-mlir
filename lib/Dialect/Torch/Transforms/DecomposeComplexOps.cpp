@@ -8145,6 +8145,183 @@ class DecomposeAtenNativeLayerNormOp
 };
 } // namespace
 
+namespace {
+class DecomposeAtenNativeLayerNormBackwardOp
+    : public OpRewritePattern<AtenNativeLayerNormBackwardOp> {
+  using OpRewritePattern<AtenNativeLayerNormBackwardOp>::OpRewritePattern;
+  LogicalResult matchAndRewrite(AtenNativeLayerNormBackwardOp op,
+                                PatternRewriter &rewriter) const override {
+    Location loc = op.getLoc();
+    auto context = op.getContext();
+
+    auto inputTy = dyn_cast<ValueTensorType>(op.getInput().getType());
+    auto gradOutTy = dyn_cast<ValueTensorType>(op.getGradOut().getType());
+    auto gradInputTy = dyn_cast<ValueTensorType>(op.getResult(0).getType());
+    auto gradWeightTy = dyn_cast<ValueTensorType>(op.getResult(1).getType());
+    auto gradBiasTy = dyn_cast<ValueTensorType>(op.getResult(2).getType());
+    if (!inputTy || !gradOutTy || !gradInputTy || !gradWeightTy ||
+        !gradBiasTy || !inputTy.hasSizes() || !inputTy.hasDtype() ||
+        !gradOutTy.hasDtype() || !gradInputTy.hasDtype() ||
+        !gradWeightTy.hasSizes() || !gradBiasTy.hasSizes())
+      return rewriter.notifyMatchFailure(
+          op, "expected ranked tensor input and tensor results");
+
+    int64_t inputRank = inputTy.getSizes().size();
+    SmallVector<Value> normalizedShapeSizesTorchInt;
+    if (!getListConstructElements(op.getNormalizedShape(),
+                                  normalizedShapeSizesTorchInt))
+      return rewriter.notifyMatchFailure(
+          op, "normalized_shape must be a constructed constant list");
+    SmallVector<bool> outputMask;
+    if (!matchPattern(op.getOutputMask(),
+                      m_TorchListOfConstantBools(outputMask)) ||
+        outputMask.size() != 3)
+      return rewriter.notifyMatchFailure(
+          op, "only constant bool output_mask list of size 3 is supported.");
+    if (!llvm::all_of(outputMask, [](bool value) { return value; }))
+      return rewriter.notifyMatchFailure(
+          op, "only all-true output_mask is supported.");
+
+    SmallVector<Operation *> cleanupListOps;
+    std::set<Operation *> cleanupOperandOps;
+    auto collectCleanupOps = [&](Value value) {
+      Operation *listOp = value.getDefiningOp();
+      if (!listOp)
+        return;
+      cleanupListOps.push_back(listOp);
+      for (Value operand : listOp->getOperands()) {
+        if (Operation *operandOp = operand.getDefiningOp())
+          cleanupOperandOps.insert(operandOp);
+      }
+    };
+    collectCleanupOps(op.getNormalizedShape());
+    collectCleanupOps(op.getOutputMask());
+
+    int64_t axis = inputRank - normalizedShapeSizesTorchInt.size();
+    if (axis < 0)
+      return rewriter.notifyMatchFailure(
+          op, "normalized_shape rank exceeds input rank");
+
+    auto sizeListType = ListType::get(IntType::get(context));
+    auto buildDimList = [&](int64_t begin, int64_t end) -> Value {
+      SmallVector<Value> dimVals;
+      dimVals.reserve(end - begin);
+      for (int64_t dim = begin; dim < end; ++dim) {
+        dimVals.push_back(Torch::ConstantIntOp::create(
+            rewriter, loc, rewriter.getI64IntegerAttr(dim)));
+      }
+      return PrimListConstructOp::create(rewriter, loc, sizeListType, dimVals);
+    };
+
+    Value normalizedDims = buildDimList(axis, inputRank);
+    Value parameterDims = buildDimList(0, axis);
+    Value cstTrue = Torch::ConstantBoolOp::create(rewriter, loc, true);
+    Value keepParamDims = Torch::ConstantBoolOp::create(
+        rewriter, loc,
+        static_cast<int64_t>(gradWeightTy.getSizes().size()) == inputRank);
+    Value none = Torch::ConstantNoneOp::create(rewriter, loc);
+    Value one = Torch::ConstantIntOp::create(rewriter, loc,
+                                             rewriter.getI64IntegerAttr(1));
+    Value normalizedElementCount = one;
+    for (Value dimSize : normalizedShapeSizesTorchInt)
+      normalizedElementCount = rewriter.createOrFold<AtenMulIntOp>(
+          loc, normalizedElementCount, dimSize);
+
+    auto castToInputDtype = [&](Value value) -> Value {
+      auto valueTy = dyn_cast<ValueTensorType>(value.getType());
+      if (!valueTy || !valueTy.hasDtype() ||
+          valueTy.getDtype() == inputTy.getDtype())
+        return value;
+      return convertTensorToDtype(rewriter, loc, value, inputTy.getDtype());
+    };
+
+    Value mean = castToInputDtype(op.getMean());
+    Value rstd = castToInputDtype(op.getRstd());
+    Value meanExpanded =
+        AtenExpandAsOp::create(rewriter, loc, inputTy, mean, op.getInput());
+    Value rstdExpanded =
+        AtenExpandAsOp::create(rewriter, loc, inputTy, rstd, op.getInput());
+
+    Value inputZeroMean = AtenSubTensorOp::create(
+        rewriter, loc, inputTy, op.getInput(), meanExpanded, one);
+    Value inputNormalized = AtenMulTensorOp::create(
+        rewriter, loc, inputTy, inputZeroMean, rstdExpanded);
+
+    Value gradOut = op.getGradOut();
+    if (gradOutTy.getDtype() != inputTy.getDtype())
+      gradOut =
+          convertTensorToDtype(rewriter, loc, gradOut, inputTy.getDtype());
+
+    Value gradOutWeighted = gradOut;
+    if (!isa<Torch::NoneType>(op.getWeight().getType())) {
+      Value weight = castToInputDtype(op.getWeight());
+      gradOutWeighted =
+          AtenMulTensorOp::create(rewriter, loc, inputTy, gradOut, weight);
+    }
+
+    Type reducedType = op.getMean().getType();
+    Value gradOutWeightedSum =
+        AtenSumDimIntListOp::create(rewriter, loc, reducedType, gradOutWeighted,
+                                    normalizedDims, cstTrue, none);
+    Value gradOutWeightedMean = AtenDivScalarOp::create(
+        rewriter, loc, reducedType, gradOutWeightedSum, normalizedElementCount);
+    gradOutWeightedMean = castToInputDtype(gradOutWeightedMean);
+    Value gradOutWeightedMeanExpanded = AtenExpandAsOp::create(
+        rewriter, loc, inputTy, gradOutWeightedMean, op.getInput());
+
+    Value gradOutWeightedInputNormalized = AtenMulTensorOp::create(
+        rewriter, loc, inputTy, gradOutWeighted, inputNormalized);
+    Value gradOutWeightedInputNormalizedSum = AtenSumDimIntListOp::create(
+        rewriter, loc, reducedType, gradOutWeightedInputNormalized,
+        normalizedDims, cstTrue, none);
+    Value gradOutWeightedInputNormalizedMean = AtenDivScalarOp::create(
+        rewriter, loc, reducedType, gradOutWeightedInputNormalizedSum,
+        normalizedElementCount);
+    gradOutWeightedInputNormalizedMean =
+        castToInputDtype(gradOutWeightedInputNormalizedMean);
+    Value gradOutWeightedInputNormalizedMeanExpanded = AtenExpandAsOp::create(
+        rewriter, loc, inputTy, gradOutWeightedInputNormalizedMean,
+        op.getInput());
+
+    Value scaledInputNormalizedMean =
+        AtenMulTensorOp::create(rewriter, loc, inputTy, inputNormalized,
+                                gradOutWeightedInputNormalizedMeanExpanded);
+    Value centeredGrad =
+        AtenSubTensorOp::create(rewriter, loc, inputTy, gradOutWeighted,
+                                gradOutWeightedMeanExpanded, one);
+    centeredGrad = AtenSubTensorOp::create(rewriter, loc, inputTy, centeredGrad,
+                                           scaledInputNormalizedMean, one);
+    Value gradInput = AtenMulTensorOp::create(rewriter, loc, inputTy,
+                                              centeredGrad, rstdExpanded);
+    if (inputTy.getDtype() != gradInputTy.getDtype())
+      gradInput = convertTensorToDtype(rewriter, loc, gradInput,
+                                       gradInputTy.getDtype());
+    gradInput = TensorStaticInfoCastOp::create(
+        rewriter, loc, op.getResult(0).getType(), gradInput);
+
+    Value gradWeightInput = AtenMulTensorOp::create(rewriter, loc, inputTy,
+                                                    gradOut, inputNormalized);
+    Value gradWeight = AtenSumDimIntListOp::create(
+        rewriter, loc, op.getResult(1).getType(), gradWeightInput,
+        parameterDims, keepParamDims, none);
+    Value gradBias = AtenSumDimIntListOp::create(
+        rewriter, loc, op.getResult(2).getType(), gradOut, parameterDims,
+        keepParamDims, none);
+
+    rewriter.replaceOp(op, {gradInput, gradWeight, gradBias});
+    for (Operation *cleanupOp : cleanupListOps) {
+      if (cleanupOp->use_empty())
+        rewriter.eraseOp(cleanupOp);
+    }
+    for (Operation *cleanupOp : cleanupOperandOps) {
+      if (cleanupOp->use_empty())
+        rewriter.eraseOp(cleanupOp);
+    }
+    return success();
+  }
+};
+} // namespace
+
 // RMS normalization:
 //     rms(x) = sqrt(eps + mean(x^2))
 //     output = (x / rms(x)) * weight
@@ -13462,6 +13639,8 @@ public:
     addPatternIfTargetOpIsIllegal<DecomposeAtenInstanceNormOp>(patterns);
     addPatternIfTargetOpIsIllegal<DecomposeAtenLayerNormOp>(patterns);
     addPatternIfTargetOpIsIllegal<DecomposeAtenNativeLayerNormOp>(patterns);
+    addPatternIfTargetOpIsIllegal<DecomposeAtenNativeLayerNormBackwardOp>(
+        patterns);
     addPatternIfTargetOpIsIllegal<DecomposeAtenRMSLayerNormOp>(patterns);
     addPatternIfTargetOpIsIllegal<DecomposeAtenGroupNormOp>(patterns);
     addPatternIfTargetOpIsIllegal<DecomposeAtenNativeGroupNormOp>(patterns);

@@ -922,6 +922,27 @@ func.func @native_layer_norm_mixed_dtypes(%input: !torch.vtensor<[1,56,56,96],bf
 
 // -----
 
+// CHECK-LABEL:  func.func @native_layer_norm_backward(
+// CHECK-SAME:          %[[DY:.*]]: !torch.vtensor<[2,3,4,5],f32>, %[[INPUT:.*]]: !torch.vtensor<[2,3,4,5],f32>, %[[MEAN:.*]]: !torch.vtensor<[2,1,1,1],f32>, %[[RSTD:.*]]: !torch.vtensor<[2,1,1,1],f32>, %[[WEIGHT:.*]]: !torch.vtensor<[1,3,4,5],f32>)
+// CHECK-NOT:      torch.aten.native_layer_norm_backward
+// CHECK:          torch.aten.sub.Tensor
+// CHECK:          torch.aten.mul.Tensor
+// CHECK:          torch.aten.sum.dim_IntList
+// CHECK:          return %{{.*}}, %{{.*}}, %{{.*}} : !torch.vtensor<[2,3,4,5],f32>, !torch.vtensor<[1,3,4,5],f32>, !torch.vtensor<[1,3,4,5],f32>
+func.func @native_layer_norm_backward(%dy: !torch.vtensor<[2,3,4,5],f32>, %input: !torch.vtensor<[2,3,4,5],f32>, %mean: !torch.vtensor<[2,1,1,1],f32>, %rstd: !torch.vtensor<[2,1,1,1],f32>, %weight: !torch.vtensor<[1,3,4,5],f32>) -> (!torch.vtensor<[2,3,4,5],f32>, !torch.vtensor<[1,3,4,5],f32>, !torch.vtensor<[1,3,4,5],f32>) {
+  %int3 = torch.constant.int 3
+  %int4 = torch.constant.int 4
+  %int5 = torch.constant.int 5
+  %normalized_shape = torch.prim.ListConstruct %int3, %int4, %int5 : (!torch.int, !torch.int, !torch.int) -> !torch.list<int>
+  %true = torch.constant.bool true
+  %output_mask = torch.prim.ListConstruct %true, %true, %true : (!torch.bool, !torch.bool, !torch.bool) -> !torch.list<bool>
+  %none = torch.constant.none
+  %dx, %dscale, %dbias = torch.aten.native_layer_norm_backward %dy, %input, %normalized_shape, %mean, %rstd, %weight, %none, %output_mask : !torch.vtensor<[2,3,4,5],f32>, !torch.vtensor<[2,3,4,5],f32>, !torch.list<int>, !torch.vtensor<[2,1,1,1],f32>, !torch.vtensor<[2,1,1,1],f32>, !torch.vtensor<[1,3,4,5],f32>, !torch.none, !torch.list<bool> -> !torch.vtensor<[2,3,4,5],f32>, !torch.vtensor<[1,3,4,5],f32>, !torch.vtensor<[1,3,4,5],f32>
+  return %dx, %dscale, %dbias : !torch.vtensor<[2,3,4,5],f32>, !torch.vtensor<[1,3,4,5],f32>, !torch.vtensor<[1,3,4,5],f32>
+}
+
+// -----
+
 // InstanceNorm (fp16): spatial mean and variance use an f32 accumulator.
 // CHECK-LABEL:  func.func @instance_norm_fp16(
 // CHECK-SAME:          %[[ARG0:.*]]: !torch.vtensor<[1,2,4,4],f16>, %[[ARG1:.*]]: !torch.vtensor<[2],f16>, %[[ARG2:.*]]: !torch.vtensor<[2],f16>) -> !torch.vtensor<[1,2,4,4],f16> {
